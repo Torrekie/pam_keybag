@@ -152,6 +152,28 @@ evaluate_with_public_api(LAContext *context, NSInteger policy, NSString *reason,
     return success;
 }
 
+static BOOL
+is_cancel_like_la_error(NSError *error)
+{
+    if (error == nil) {
+        return NO;
+    }
+
+    if (![error.domain isEqualToString:LAErrorDomain]) {
+        return NO;
+    }
+
+    switch ((LAError)error.code) {
+    case LAErrorUserCancel:
+    case LAErrorSystemCancel:
+    case LAErrorAppCancel:
+    case LAErrorUserFallback:
+        return YES;
+    default:
+        return NO;
+    }
+}
+
 PAM_KEYBAG_EXPORT int
 pam_keybag_core_mkb_authenticate_bytes(const uint8_t *passcode,
     size_t passcode_len, int unlock_springboard, int *mkb_status_out)
@@ -241,17 +263,26 @@ pam_keybag_core_ui_authenticate(const char *reason, const char *caller_name,
 
         ok = evaluate_with_spi_async(context, policy_id, &error);
         if (!ok) {
+            if (is_cancel_like_la_error(error)) {
+                return PAM_KEYBAG_CORE_FAILURE;
+            }
             ok = evaluate_with_spi_sync(context, policy_id, &error);
+            if (!ok && is_cancel_like_la_error(error)) {
+                return PAM_KEYBAG_CORE_FAILURE;
+            }
         }
 
         if (!ok && policy_id != DEVICE_OWNER_AUTH_POLICY) {
             ok = evaluate_with_spi_async(context, DEVICE_OWNER_AUTH_POLICY, &error);
-            if (!ok) {
+            if (!ok && !is_cancel_like_la_error(error)) {
                 ok = evaluate_with_spi_sync(context, DEVICE_OWNER_AUTH_POLICY, &error);
+            }
+            if (!ok && is_cancel_like_la_error(error)) {
+                return PAM_KEYBAG_CORE_FAILURE;
             }
         }
 
-        if (!ok) {
+        if (!ok && !is_cancel_like_la_error(error)) {
             ok = evaluate_with_public_api(context, DEVICE_OWNER_AUTH_POLICY,
                 reason_ns, &error);
         }
