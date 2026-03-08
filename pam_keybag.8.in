@@ -1,0 +1,126 @@
+.\"
+.\" Copyright (c) 2026 Torrekie
+.\"
+.Dd March 6, 2026
+.Dt pam_keybag 8
+.Os
+.Sh NAME
+.Nm pam_keybag
+.Nd authenticate with MobileKeyBag device passcode
+.Sh SYNOPSIS
+.Op Ar service-name
+.Ar function-class
+.Ar control-flag
+pam_keybag
+.Op Ar options
+.Sh DESCRIPTION
+The
+.Nm
+module supports the
+.Dq auth
+function class.
+It reads
+.Xr PAM_AUTHTOK 3
+and validates it through keybag logic implemented in
+.Nm
+itself.
+By default, a dedicated signed helper process is used as a transport layer.
+The module launches the helper with
+.Fn posix_spawn 2
+and sends passcode bytes over stdin; the helper loads
+.Pa pam_keybag.so
+with
+.Fn dlopen 3
+and calls exported module functions via
+.Fn dlsym 3 .
+.Pp
+This is a private API path and may require platform-specific privileges.
+If the helper cannot access the framework or symbol,
+.Nm
+returns
+.Dv PAM_IGNORE .
+.Pp
+By default, the module does not call
+.Fn MKBUnlockDevice ,
+so successful authentication does not require triggering the SpringBoard unlock path.
+.Pp
+Remote authentication requests are denied by default; set
+.Cm allow_remote
+to enable this module for remote sessions.
+.Pp
+The following options may be passed to this authentication module:
+.Bl -tag -width 20n
+.It Cm user Ns = Ns Ar name1,name2,...
+Comma-separated allowlist of usernames.
+Defaults to
+.Dq mobile .
+.It Cm prompt Ns = Ns Ar text
+Custom terminal prompt passed to
+.Xr pam_get_authtok 3 .
+Defaults to
+.Dq Mobile passcode: .
+.It Cm use_first_pass
+Require an existing
+.Dv PAM_AUTHTOK
+from an earlier module.
+If missing or invalid, authentication fails without prompting.
+.It Cm try_first_pass
+Try existing
+.Dv PAM_AUTHTOK
+first.
+If missing or invalid, prompt for token and retry.
+.It Cm nullok
+Allow empty token and pass it to MobileKeyBag verify/unlock API.
+By default empty token is rejected.
+.It Cm nullok_secure
+Like
+.Cm nullok ,
+but only for local requests.
+For remote requests this option has no effect.
+.It Cm unlock_springboard
+Use
+.Fn MKBUnlockDevice .
+Without this option, the module uses verify-only path
+.Fn MKBVerifyPasswordWithContext .
+.It Cm direct_mode
+Disable helper usage and call keybag/UI APIs directly from
+.Nm .
+This requires the PAM client process to be signed with the required entitlements.
+.It Cm allow_remote
+Allow remote PAM requests (for example ssh).
+.It Cm prefer_ui_prompt
+In helper mode, launch UI helper in parallel with terminal prompt.
+Authentication succeeds when either UI or terminal path succeeds.
+In
+.Cm direct_mode ,
+run UI prompt directly in-module before terminal fallback.
+.It Cm ui_helper Ns = Ns Ar path
+Override helper executable path used for both keybag auth and optional UI prompt.
+Defaults to
+.Pa @UI_HELPER_DEFAULT_PATH@ .
+.It Cm module_path Ns = Ns Ar path
+Override module dylib path used by helper
+.Fn dlopen 3 .
+Defaults to
+.Pa @MODULE_DEFAULT_PATH@ .
+.It Cm ui_reason Ns = Ns Ar text
+Reason string passed to UI helper.
+If omitted, defaults to a ps-like line with process PID and full command line.
+.El
+.Sh EXAMPLES
+Default verify-only path (local only, user defaults to
+.Dq mobile ) :
+.Bd -literal -offset indent
+auth    required    pam_keybag.so
+account required    pam_unix.so
+.Ed
+.Pp
+Enable UI prompt in parallel:
+.Bd -literal -offset indent
+auth    required    pam_keybag.so prefer_ui_prompt ui_reason="Authenticate to continue"
+account required    pam_unix.so
+.Ed
+.Sh SEE ALSO
+.Xr pam.conf 5 ,
+.Xr pam 8 ,
+.Xr pam_get_authtok 3
